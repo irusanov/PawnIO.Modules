@@ -1,2 +1,6 @@
 *.amx
 *.bin
+*.dll
+*.exe
+*.pem
+.vscode/settings.json
