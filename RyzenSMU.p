@@ -485,7 +485,7 @@ NTSTATUS:check_smu_register_range(cmd) {
     if ((cmd & 0xFFFFF000) == 0x3B10000) return STATUS_SUCCESS;
 
     // 2. 0x130000*0 (0x13000000 - 0x130000F0) SMU Mailboxes on Pre-Ryzen
-    if ((cmd & 0xFFFFFFF0) == (0x13000000)) return STATUS_SUCCESS;
+    if (cmd >= 0x13000000 && cmd <= 0x130000F0) return STATUS_SUCCESS;
 
     // 3. 0x56***-0x5A*** (0x56000 – 0x5AFFF) SMU SVI2 Planes
     if (cmd >= 0x56000 && cmd <= 0x5AFFF) return STATUS_SUCCESS;
