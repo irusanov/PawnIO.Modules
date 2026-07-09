@@ -303,13 +303,20 @@ NTSTATUS:i801_check_pre()
 }
 
 i801_kill() {
+    // In byte-by-byte block mode the controller keeps SMBCLK low while
+    // BYTE_DONE is set. A pending BYTE_DONE must be acknowledged before
+    // KILL can release HOST_BUSY reliably.
+    new hststs = io_in_byte(SMBHSTSTS);
+    if (hststs & SMBHSTSTS_BYTE_DONE)
+        io_out_byte(SMBHSTSTS, SMBHSTSTS_BYTE_DONE);
+
     // try to stop the current command
     io_out_byte(SMBHSTCNT, SMBHSTCNT_KILL);
     microsleep(1000);
     io_out_byte(SMBHSTCNT, 0);
 
     // Check if it worked
-    new hststs = io_in_byte(SMBHSTSTS);
+    hststs = io_in_byte(SMBHSTSTS);
     if ((hststs & SMBHSTSTS_HOST_BUSY) ||
         !(hststs & SMBHSTSTS_FAILED))
         debug_print(''Failed terminating the transaction\n'');
@@ -351,19 +358,15 @@ NTSTATUS:i801_wait_intr(&hststs, size)
         // Also allows for 1 stop bit
         microsleep_short(clock_us);
         hststs = io_in_byte(SMBHSTSTS);
-        hststs &= STATUS_ERROR_FLAGS | SMBHSTSTS_INTR;
-        if (!(hststs & SMBHSTSTS_HOST_BUSY) && hststs) {
+
+        if (!(hststs & SMBHSTSTS_HOST_BUSY) &&
+            (hststs & (STATUS_ERROR_FLAGS | SMBHSTSTS_INTR))) {
             hststs &= STATUS_ERROR_FLAGS;
             return STATUS_SUCCESS;
         }
-    } while (((hststs & SMBHSTSTS_HOST_BUSY) || !(hststs & (STATUS_ERROR_FLAGS | SMBHSTSTS_INTR))) && (get_tick_count() < deadline));
+    } while (get_tick_count() < deadline);
 
-    if ((hststs & SMBHSTSTS_HOST_BUSY) || !(hststs & (STATUS_ERROR_FLAGS | SMBHSTSTS_INTR)))
-        return STATUS_IO_TIMEOUT;
-
-    hststs &= (STATUS_ERROR_FLAGS | SMBHSTSTS_INTR);
-
-    return STATUS_SUCCESS;
+    return STATUS_IO_TIMEOUT;
 }
 
 NTSTATUS:i801_transaction(xact, &hststs, size)
@@ -426,21 +429,28 @@ NTSTATUS:i801_i2c_blk_byte_by_byte(read_write, in[33], out[33], &hststs)
     else
         smbcmd = I801_BLOCK_DATA;
 
+    // LAST_BYTE has to be visible before BYTE_DONE for the previous byte is
+    // acknowledged. For a one-byte read it therefore has to be set before START.
+    if (len == 1 && read_write == I2C_SMBUS_READ)
+        smbcmd |= SMBHSTCNT_LAST_BYTE;
+
+    io_out_byte(SMBHSTCNT, smbcmd | SMBHSTCNT_START);
+
     for (new i = 1; i <= len; i++) {
-        if (i == len && read_write == I2C_SMBUS_READ)
-            smbcmd |= SMBHSTCNT_LAST_BYTE;
-
-        io_out_byte(SMBHSTCNT, smbcmd);
-
-        if (i == 1)
-            io_out_byte(SMBHSTCNT, io_in_byte(SMBHSTCNT) | SMBHSTCNT_START);
-
         new NTSTATUS:byte_status = i801_wait_byte_done(hststs);
-        if (!NT_SUCCESS(byte_status) || hststs)
+        if (!NT_SUCCESS(byte_status))
+            return byte_status;
+        if (hststs)
             return i801_hststs_to_ntstatus(hststs);
 
-        if (read_write == I2C_SMBUS_READ)
+        if (read_write == I2C_SMBUS_READ) {
             out[i] = io_in_byte(SMBBLKDAT);
+
+            // Program LAST_BYTE while the controller is still paused on the
+            // penultimate BYTE_DONE. Clearing BYTE_DONE then starts the last byte.
+            if (i == len - 1)
+                io_out_byte(SMBHSTCNT, smbcmd | SMBHSTCNT_LAST_BYTE);
+        }
 
         if (read_write == I2C_SMBUS_WRITE && i + 1 <= len)
             io_out_byte(SMBBLKDAT, in[i + 1]);
