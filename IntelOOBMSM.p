@@ -124,8 +124,11 @@ NTSTATUS:oobmsm_init() {
     pci_config_read_dword(OOBMSM_BUS, OOBMSM_DEV, OOBMSM_FN, PCI_CFG_BAR0_LOW, base_lo);
     if (base_lo == 0 || base_lo == 0xFFFFFFFF)
         return STATUS_NOT_SUPPORTED;
-    if ((base_lo & PCI_BAR_MEM_TYPE_64BIT) != 0)
-        pci_config_read_dword(OOBMSM_BUS, OOBMSM_DEV, OOBMSM_FN, PCI_CFG_BAR0_HIGH, base_hi);
+    if ((base_lo & PCI_BAR_MEM_TYPE_64BIT) != 0) {
+        status = pci_config_read_dword(OOBMSM_BUS, OOBMSM_DEV, OOBMSM_FN, PCI_CFG_BAR0_HIGH, base_hi);
+        if (!NT_SUCCESS(status))
+            return status;
+    }
 
     g_bar_addr = ((base_hi & 0xFFFFFFFF) << 32) | (base_lo & PCI_BAR_MEM_ADDR_MASK);
     if (g_bar_addr == 0)
