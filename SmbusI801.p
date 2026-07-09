@@ -261,7 +261,7 @@ NTSTATUS:i801_init()
 
     // Get SMBus IO base address, the last bit indicates IO mapping
     status = pci_config_read_dword(pci_addr[0], pci_addr[1], pci_addr[2], SMB_BASE, pci_config);
-    if (!NT_SUCCESS(status) && !(pci_config & 0x1))
+    if (!NT_SUCCESS(status) || !(pci_config & 0x1))
         return STATUS_NOT_SUPPORTED;
 
     i801_smba = pci_config & 0xffe0;
